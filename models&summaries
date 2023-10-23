@@ -1,0 +1,39 @@
+# load packages
+library(lme4)
+library(MuMIn)
+library(lmerTest)
+library(performance)
+
+
+# load data frame
+ben2cm <- read.csv("ben2cm.csv")
+ben5cm <- read.csv("ben5cm.csv")
+
+
+# function that returns a list of the results for each of the SD metrics tested
+res <- function (ben_df) { 
+  
+mod_res_list <- list()  
+  
+  for(i in which(colnames(ben_df)=="sdNDVI" # first column with SD values
+               ): which(colnames(ben_df)=="SpSp" # last column with SD values
+                        )) {
+
+mod = glmer(ben_df[,i] ~ scale(SR) + flowering  + (1|treatment), data=ben_df, family=Gamma(link='log'))
+ 
+mod_res <- list(
+  summary = summary(mod),
+  R2 = data.frame(r.squaredGLMM(mod))
+  )
+mod_res_list[[i-4]] <- mod_res # 4 = index of the last column without SD values
+
+}
+names(mod_res_list) <- colnames(ben_df[,-c(1:4)])
+
+return(mod_res_list)
+
+}
+
+# run models 
+mod_res2cm <- res(ben2cm)
+mod_res5cm <- res(ben5cm)
