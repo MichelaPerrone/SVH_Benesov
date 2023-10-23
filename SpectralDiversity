@@ -1,0 +1,119 @@
+library(hypervolume)
+library(oceanmap)
+library(raster)
+library(rasterdiv)
+library(RStoolbox)
+library(tibble)
+library(terra)
+library(funrar)
+library(glue)
+
+
+
+# function for calculating the NDVI
+VI <- function(r, k, i) {
+  bk <- r[[k]]
+  bi <- r[[i]]
+  vi <- (bk - bi) / (bk + bi)
+  return(vi)
+}
+
+## function for calculating continuous spectral diversity metrics
+SpecDiv = function (ndvi.r, r, shp) {
+  
+  # prepare data frame
+  df<- data.frame(matrix(nrow=length(shp$Id), ncol= 13))
+  rownames(df)<- shp$Plot
+  df<-rownames_to_column(df)
+  colnames(df)<- c('Id','sdNDVI', 'CVNDVI', 'RaoQ', 'MPD', 'CHV',
+                   'B1_CV', 'B2_CV', 'B3_CV', 'B4_CV', 'B5_CV', 'B6_CV', 'CVrefl')
+ 
+  # calculate PCA from original multiband raster
+  PCA_rast<- rasterPCA(raster, spca= T, maskCheck= T, nComp=3) # return first 3 PCs
+  PCA_rast = stack(PCA_rast$map)
+  crs(PCA_rast) = crs(shp)
+  
+  # calculate SD metrics
+  for (i in 1:length(shp$Id)) {
+    
+    code_i<-shp$Plot[i] # get Id for plot 'i'
+    shp_i<- shp[shp$Plot == code_i,] # select subplot corresponding to Id 'i'
+    # crop rasters with subplot 'i' polygon
+    ndvi_plot<- raster::crop(ndvi, shp_i) # crop ndvi raster
+    plot<- stack(raster::crop(raster, shp_i)) # crop original multiband raster
+    pca_plot<- raster::crop(PCA_rast, shp_i) # crop PCA raster
+    #spsp_plot<- raster::crop(raster_specsp, shp_i) # crop spectral species raster
+    
+    # sd NDVI
+    sdndvi_i<- sd(getValues(ndvi_plot), na.rm=TRUE) # calculate sdNDVI for subplot 'i'
+    df$sdNDVI[df$Id == code_i]<- sdndvi_i # store sdNDVI 'i' value
+    # CV NDVI
+    meanndvi_i= mean(getValues(ndvi_plot), na.rm=TRUE) # calculate mean NDVI
+    df$CVNDVI[df$Id == code_i]<- sdndvi_i/meanndvi_i # calculate CV NDVI and store 'i' value
+    # Rao's Q (from the first PC axis)
+    rao_i<- paRao(x=pca_plot[[1]], area=shp_i, field= 'Id', alpha=1,simplify=3) # calculate Rao's Q
+    df$RaoQ[i]<- rao_i$alpha.1 # store Rao's Q 'i' value
+    # spectral Mean-Pairwise Distance (MPD)
+    mat_PC1 = raster2matrix(pca_plot[[1]]) # convert PC1 to matrix
+    mat_PC2 = raster2matrix(pca_plot[[2]]) # convert PC2 to matrix
+    vect_PC1 = na.omit(as.vector(mat_PC1)) # store PC1 and PC2 matrices as vectors and put them together in a df
+    vect_PC2 = na.omit(as.vector(mat_PC2)) 
+    df_pixels = data.frame(vect_PC1, vect_PC2) 
+    rownames(df_pixels) = glue("pix{n1}", n1 = rep(1:length(vect_PC1),1)) # give each row a 'pixel Id'
+    dist_mat = compute_dist_matrix(df_pixels, metric='euclidean') # compute distance matrix
+    mpd = mean(dist_mat, na.rm= T) # calculate mean pairwise-distance of pixels
+    df$MPD[i] = mpd # store MPD 'i' value
+    # Convex Hull Volume
+    mat_PC3 = raster2matrix(pca_plot[[3]]) # convert PC3 to matrix
+    vect_PC3 = na.omit(as.vector(mat_PC3)) # store PC3 matrix as vector and put it together with PC1 and PC2 vectors in a df
+    df_PCA = data.frame(vect_PC1,vect_PC2,vect_PC3)
+    CHV = expectation_convex(df_PCA, check.memory = F) # calculate CHV
+    #CHV_value = CHV@Volume
+    df$CHV[df$Id == code_i] = CHV@Volume # store CHV 'i' value
+    # CV of reflectance
+    for (j in 1:length(raster@layers)) { # calculate CV for each spectral band
+      layer = plot[[j]]
+      sd_band = sd(getValues(layer), na.rm=T)
+      mean_band = mean(getValues(layer), na.rm=T)
+      CV_band = sd_band/mean_band 
+      df[i,j+7] = CV_band # store value in column j (band number) + 7
+    }
+    df$CVrefl[df$Id == code_i] = 
+      (sum(df[i, c(8:(ncol(df)-1))]))/length(raster@layers) # calculate CV for all bands
+    
+    print(i)
+  }
+  
+  return(data.frame(df))
+}
+
+# load plots shapefile
+plots<-shapefile("benesov_plots.shp")
+
+# load rasters
+ben2cm.r <- stack('ben2cm.tif') # 2-cm multiband raster
+shadow2cm <- stack('shadmask2cm.tif') # 2-cm shadow mask
+
+ben5cm.r <- stack('ben5cm.tif') # 5-cm multiband raster
+shadow5cm<- stack('shadmask5cm.tif') # 5-cm shadow mask
+
+# mask shadows out
+ben2cm.r.masked <- mask(ben2cm.r,shadow2cm)
+ben5cm.r.masked <- mask(ben5cm.r,shadow5cm)
+
+# create ndvi rasters
+ndvi2cm <- VI(ben2cm.r.masked, 5, 3)
+ndvi5cm <- VI(ben5cm.r.masked, 5, 3)
+
+# create masks for non-vegetated pixels
+ndvi2cm[ndvi2cm<0.3]<- NA  # NDVI threshold set to 0.3
+ndvi5cm[ndvi5cm<0.3]<- NA
+
+# mask out non-vegetated pixels
+ben2cm.r.masked <- mask(ben2cm.r.masked,ndvi2cm)
+ben5cm.r.masked <- mask(ben5cm.r.masked,ndvi5cm)
+
+# calculate spectral diversity and store results in a data frame
+ben2cm_SD = SpecDiv(stack(ndvi2cm), stack(ben2cm.r.masked), plots)
+ben5cm_SD = SpecDiv(stack(ndvi5cm), stack(ben5cm.r.masked), plots)
+
