@@ -29,9 +29,9 @@ SpecDiv = function (ndvi.r, r, shp) {
                    'B1_CV', 'B2_CV', 'B3_CV', 'B4_CV', 'B5_CV', 'B6_CV', 'CVrefl')
  
   # calculate PCA from original multiband raster
-  PCA_rast<- rasterPCA(raster, spca= T, maskCheck= T, nComp=3) # return first 3 PCs
-  PCA_rast = stack(PCA_rast$map)
-  crs(PCA_rast) = crs(shp)
+  PCA_r<- rasterPCA(r, spca= T, maskCheck= T, nComp=3) # return first 3 PCs
+  PCA_r = stack(PCA_r$map)
+  crs(PCA_r) = crs(shp)
   
   # calculate SD metrics
   for (i in 1:length(shp$Id)) {
@@ -39,10 +39,9 @@ SpecDiv = function (ndvi.r, r, shp) {
     code_i<-shp$Plot[i] # get Id for plot 'i'
     shp_i<- shp[shp$Plot == code_i,] # select subplot corresponding to Id 'i'
     # crop rasters with subplot 'i' polygon
-    ndvi_plot<- raster::crop(ndvi, shp_i) # crop ndvi raster
-    plot<- stack(raster::crop(raster, shp_i)) # crop original multiband raster
-    pca_plot<- raster::crop(PCA_rast, shp_i) # crop PCA raster
-    #spsp_plot<- raster::crop(raster_specsp, shp_i) # crop spectral species raster
+    ndvi_plot<- raster::crop(ndvi.r, shp_i) # crop ndvi raster
+    plot<- stack(raster::crop(r, shp_i)) # crop original multiband raster
+    pca_plot<- raster::crop(PCA_r, shp_i) # crop PCA raster
     
     # sd NDVI
     sdndvi_i<- sd(getValues(ndvi_plot), na.rm=TRUE) # calculate sdNDVI for subplot 'i'
@@ -79,7 +78,7 @@ SpecDiv = function (ndvi.r, r, shp) {
       df[i,j+7] = CV_band # store value in column j (band number) + 7
     }
     df$CVrefl[df$Id == code_i] = 
-      (sum(df[i, c(8:(ncol(df)-1))]))/length(raster@layers) # calculate CV for all bands
+      (sum(df[i, c(8:(ncol(df)-1))]))/length(r@layers) # calculate CV for all bands
     
     print(i)
   }
